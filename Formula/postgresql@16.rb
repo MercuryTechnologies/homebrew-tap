@@ -59,6 +59,29 @@ class PostgresqlAT16 < Formula
     ENV.prepend "LDFLAGS", "-L#{Formula["gettext"].opt_lib}"
     ENV.prepend "CPPFLAGS", "-I#{Formula["gettext"].opt_include}"
 
+    # We need to do a fairly complex dance with the build system here.
+    #
+    # We want PostgreSQL to load libraries and extensions from
+    # `/opt/homebrew/lib/postgresql@16` and
+    # `/opt/homebrew/share/postgresql@16`, but Homebrew will error if you try
+    # to actually install into those locations.
+    #
+    # So we tell the `./configure` and `make` build scripts that those are the
+    # library directories and data directories respectively, but when we do
+    # `make install-world` we give it the paths in
+    # `/opt/homebrew/opt/postgresql@16` that Homebrew will actually let us
+    # install to.
+    #
+    # Then, when the formula is linked into the Homebrew prefix, the paths
+    # installed to `/opt/homebrew/opt/postgresql@16/share/postgresql@16` will
+    # be symlinked and available at `/opt/homebrew/share/postgresql@16`.
+    #
+    # This is important because it allows extensions like PostGIS to also link
+    # files there for PostgreSQL to load.
+    #
+    # Note: Various parts of the build system refer to the `datadir` and
+    # `sharedir`. These are the same thing.
+
     datadir = "#{HOMEBREW_PREFIX}/share/#{name}"
     libdir = "#{HOMEBREW_PREFIX}/lib/#{name}"
 
@@ -100,11 +123,12 @@ class PostgresqlAT16 < Formula
     # in ./configure, but needs to be set here otherwise install prefixes containing
     # the string "postgres" will get an incorrect pkglibdir.
     # See https://github.com/Homebrew/homebrew-core/issues/62930#issuecomment-709411789
-    system "make", "pkglibdir=#{lib}/#{name}",
+    system "make", "datadir=#{datadir}",
+                   "pkglibdir=#{libdir}",
                    "pkgincludedir=#{opt_include}/postgresql",
                    "includedir_server=#{opt_include}/postgresql/server"
     system "make", "install-world", "datadir=#{pkgshare}",
-                                    "libdir=#{lib}",
+                                    "libdir=#{lib}/#{name}",
                                     "pkglibdir=#{lib}/#{name}",
                                     "includedir=#{include}",
                                     "pkgincludedir=#{include}/postgresql",
@@ -153,10 +177,13 @@ class PostgresqlAT16 < Formula
   end
 
   test do
+    sharedir = "#{HOMEBREW_PREFIX}/share/#{name}"
+    libdir = "#{HOMEBREW_PREFIX}/lib/#{name}"
+
     system "#{bin}/initdb", testpath/"test" unless ENV["HOMEBREW_GITHUB_ACTIONS"]
-    assert_equal opt_pkgshare.to_s, shell_output("#{bin}/pg_config --sharedir").chomp
-    assert_equal opt_lib.to_s, shell_output("#{bin}/pg_config --libdir").chomp
-    assert_equal (opt_lib/"postgresql").to_s, shell_output("#{bin}/pg_config --pkglibdir").chomp
+    assert_equal sharedir, shell_output("#{bin}/pg_config --sharedir").chomp
+    assert_equal libdir, shell_output("#{bin}/pg_config --pkglibdir").chomp
+    assert_equal libdir, shell_output("#{bin}/pg_config --libdir").chomp
     assert_equal (opt_include/"postgresql").to_s, shell_output("#{bin}/pg_config --pkgincludedir").chomp
     assert_equal (opt_include/"postgresql/server").to_s, shell_output("#{bin}/pg_config --includedir-server").chomp
     assert_match "-I#{Formula["gettext"].opt_include}", shell_output("#{bin}/pg_config --cppflags")
